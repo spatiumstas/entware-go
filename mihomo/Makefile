@@ -60,6 +60,7 @@ GO_LDFLAGS += \
 	-X '$(XIMPORTPATH)/constant.Version=$(PKG_VERSION)'
 
 GO_TARGET:=./
+GO_TAGS:=with_gvisor
 
 define Package/mihomo/install
 	$(INSTALL_DIR) $(1)/opt/sbin
