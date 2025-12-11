@@ -5,13 +5,13 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=mihomo
-PKG_VERSION:=1.19.17
+PKG_VERSION:=1.19.20
 PKG_RELEASE:=1
 
 PKG_SOURCE_PROTO:=git
-PKG_SOURCE_URL:=https://github.com/MetaCubeX/mihomo.git
 PKG_SOURCE_VERSION:=v$(PKG_VERSION)
-PKG_MIRROR_HASH:=27b0641d25b485cbff74f4cc6290adb3418e6a3e94e50137f59a8f62ddd1a27f
+PKG_SOURCE_URL:=https://github.com/MetaCubeX/mihomo
+PKG_MIRROR_HASH:=d4bb41297c08ed9603fbf606f8056b58ec4d041043947c6cbe4520eb98169559
 
 PKG_LICENSE:=MIT
 PKG_LICENSE_FILES:=LICENSE
@@ -57,9 +57,11 @@ Package/mihomo_nohf/conffiles=$(Package/mihomo/conffiles)
 XIMPORTPATH:=$(call tolower,$(XIMPORTPATH))
 
 GO_LDFLAGS += \
-	-X '$(XIMPORTPATH)/constant.Version=$(PKG_VERSION)'
+	-X '$(XIMPORTPATH)/constant.Version=$(PKG_VERSION)' \
+	-X '$(XIMPORTPATH)/constant.BuildTime='
 
 GO_TARGET:=./
+GO_TAGS:=with_gvisor
 
 define Package/mihomo/install
 	$(INSTALL_DIR) $(1)/opt/sbin
