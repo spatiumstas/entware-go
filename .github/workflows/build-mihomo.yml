@@ -1,0 +1,66 @@
+name: Build mihomo
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            packages: mihomo
+          - arch: aarch64
+            packages: mihomo
+          - arch: armv7
+            packages: mihomo
+          - arch: mipsel
+            packages: mihomo
+          - arch: mips
+            packages: mihomo
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Resolve latest mihomo version
+        id: mihomo-version
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const release = await github.rest.repos.getLatestRelease({
+              owner: 'MetaCubeX',
+              repo: 'mihomo',
+            });
+
+            core.setOutput('version', release.data.tag_name.replace(/^v/, ''));
+
+      - name: Patch package version for CI build
+        shell: bash
+        run: |
+          version='${{ steps.mihomo-version.outputs.version }}'
+          echo "Building mihomo version: ${version}"
+          sed -i -E "s/^PKG_VERSION:=.*/PKG_VERSION:=${version}/" mihomo/Makefile
+          sed -i -E "s/^PKG_MIRROR_HASH:=.*/PKG_MIRROR_HASH:=skip/" mihomo/Makefile
+
+      - name: Build mihomo packages
+        uses: ownik/gh-action-entware-sdk@v1
+        env:
+          ARCH: ${{ matrix.arch }}
+          PACKAGES: ${{ matrix.packages }}
+          V: s
+          FEEDNAME: local
+
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: mihomo-${{ steps.mihomo-version.outputs.version }}-${{ matrix.arch }}
+          path: bin/targets/**/packages/mihomo_*.ipk
+          if-no-files-found: warn
+          compression-level: 0
