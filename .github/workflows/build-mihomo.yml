@@ -1,6 +1,7 @@
 name: Build mihomo
 
 on:
+  push:
   workflow_dispatch:
 
 permissions:
