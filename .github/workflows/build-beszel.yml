@@ -1,4 +1,4 @@
-name: Build mihomo
+name: Build beszel-agent
 
 on:
   workflow_dispatch:
@@ -13,29 +13,25 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - arch: x64
-            packages: mihomo
           - arch: aarch64
-            packages: mihomo
-          - arch: armv7
-            packages: mihomo
+            packages: beszel-agent
           - arch: mipsel
-            packages: mihomo
+            packages: beszel-agent
           - arch: mips
-            packages: mihomo
+            packages: beszel-agent
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Resolve latest mihomo version
-        id: mihomo-version
+      - name: Resolve latest beszel-agent version
+        id: beszel-agent-version
         uses: actions/github-script@v8
         with:
           script: |
             const release = await github.rest.repos.getLatestRelease({
-              owner: 'MetaCubeX',
-              repo: 'mihomo',
+              owner: 'henrygd',
+              repo: 'beszel',
             });
 
             core.setOutput('version', release.data.tag_name.replace(/^v/, ''));
@@ -43,12 +39,12 @@ jobs:
       - name: Patch package version for CI build
         shell: bash
         run: |
-          version='${{ steps.mihomo-version.outputs.version }}'
-          echo "Building mihomo version: ${version}"
-          sed -i -E "s/^PKG_VERSION:=.*/PKG_VERSION:=${version}/" mihomo/Makefile
-          sed -i -E "s/^PKG_MIRROR_HASH:=.*/PKG_MIRROR_HASH:=skip/" mihomo/Makefile
+          version='${{ steps.beszel-agent-version.outputs.version }}'
+          echo "Building beszel-agent version: ${version}"
+          sed -i -E "s/^PKG_VERSION:=.*/PKG_VERSION:=${version}/" beszel-agent/Makefile
+          sed -i -E "s/^PKG_MIRROR_HASH:=.*/PKG_MIRROR_HASH:=skip/" beszel-agent/Makefile
 
-      - name: Build mihomo packages
+      - name: Build beszel-agent packages
         uses: ownik/gh-action-entware-sdk@v1
         env:
           ARCH: ${{ matrix.arch }}
@@ -60,8 +56,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: mihomo-${{ steps.mihomo-version.outputs.version }}-${{ matrix.arch }}
-          path: bin/targets/**/packages/mihomo_*.ipk
+          name: beszel-agent-${{ steps.beszel-agent-version.outputs.version }}-${{ matrix.arch }}
+          path: bin/targets/**/packages/beszel-agent_*.ipk
           if-no-files-found: warn
           compression-level: 0
 
@@ -98,38 +94,28 @@ jobs:
             core.setOutput('id', String(picked.id));
             core.setOutput('tag', picked.tag_name);
 
-      - name: Remove previous mihomo ipk assets
+      - name: Remove previous beszel-agent ipk assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_ID: ${{ steps.target-release.outputs.id }}
         run: |
           gh api "repos/${{ github.repository }}/releases/${RELEASE_ID}/assets" \
-            --jq '.[] | select(.name | test("^mihomo_.*\\.ipk$")) | .id' \
+            --jq '.[] | select(.name | test("^beszel-agent_.*\\.ipk$")) | .id' \
             | while read -r asset_id; do
                 [ -n "$asset_id" ] || continue
                 gh api -X DELETE "repos/${{ github.repository }}/releases/assets/${asset_id}"
               done
 
-      - name: Upload new mihomo ipk assets to latest release
+      - name: Upload new beszel-agent ipk assets to latest release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.target-release.outputs.tag }}
         run: |
-          mapfile -t files < <(find out -type f -name 'mihomo_*.ipk' | sort)
+          mapfile -t files < <(find out -type f -name 'beszel-agent_*.ipk' | sort)
           if [ ${#files[@]} -eq 0 ]; then
-            echo "No mihomo ipk files found"
+            echo "No beszel-agent ipk files found"
             exit 1
           fi
 
           printf '%s\n' "${files[@]}"
           gh release upload "$TAG" "${files[@]}" --clobber
-
-      - name: Dispatch to feedly
-        if: success()
-        run: |
-          curl -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: token ${{ secrets.AGGREGATOR_PAT }}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/spatiumstas/feedly/dispatches \
-            -d '{"event_type":"package-built","client_payload":{"package":"'"${{ github.repository }}"'","channel":"release","tag":"'"${{ steps.target-release.outputs.tag }}"'"}}'
