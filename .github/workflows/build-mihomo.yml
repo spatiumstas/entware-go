@@ -30,7 +30,7 @@ jobs:
 
       - name: Resolve latest mihomo version
         id: mihomo-version
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const release = await github.rest.repos.getLatestRelease({
@@ -58,7 +58,7 @@ jobs:
 
       - name: Upload build artifacts
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: mihomo-${{ steps.mihomo-version.outputs.version }}-${{ matrix.arch }}
           path: bin/targets/**/packages/mihomo_*.ipk
@@ -79,7 +79,7 @@ jobs:
 
       - name: Resolve latest target release
         id: target-release
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const { owner, repo } = context.repo;
