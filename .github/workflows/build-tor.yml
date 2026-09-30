@@ -1,0 +1,226 @@
+
+name: Build Latest Tor for Entware
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Resolve latest Tor version
+    runs-on: ubuntu-latest
+
+    outputs:
+      version: ${{ steps.tor.outputs.version }}
+      hash: ${{ steps.tor.outputs.hash }}
+
+    steps:
+      - name: Get latest stable Tor
+        id: tor
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TOR_VERSION="$(
+            curl -fsSL https://dist.torproject.org/ |
+              grep -oE 'tor-[0-9]+(\.[0-9]+){3}\.tar\.gz' |
+              sed -E 's/^tor-//; s/\.tar\.gz$//' |
+              sort -Vu | tail -n 1
+          )"
+
+          [[ "$TOR_VERSION" =~ ^[0-9]+(\.[0-9]+){3}$ ]]
+
+          TOR_FILE="tor-${TOR_VERSION}.tar.gz"
+
+          PKG_HASH="$(
+            curl -fsSL \
+              "https://dist.torproject.org/${TOR_FILE}.sha256sum" |
+              awk '{print $1; exit}'
+          )"
+
+          [[ "$PKG_HASH" =~ ^[0-9a-fA-F]{64}$ ]]
+
+          echo "version=$TOR_VERSION" >> "$GITHUB_OUTPUT"
+          echo "hash=$PKG_HASH" >> "$GITHUB_OUTPUT"
+
+          echo "Tor version: $TOR_VERSION"
+          echo "SHA256: $PKG_HASH"
+
+  build:
+    name: Build ${{ matrix.arch }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        arch:
+          - aarch64-3.10
+          - armv7-3.2
+          - mips-3.4
+          - mipsel-3.4
+          - x64-3.2
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Prepare Entware Tor package
+        shell: bash
+        env:
+          TOR_VERSION: ${{ needs.prepare.outputs.version }}
+          TOR_HASH: ${{ needs.prepare.outputs.hash }}
+        run: |
+          set -euo pipefail
+
+          git clone --depth 1 \
+            https://github.com/Entware/entware-packages.git \
+            feed
+
+          sed -i \
+            -e "s/^PKG_VERSION:=.*/PKG_VERSION:=$TOR_VERSION/" \
+            -e "s/^PKG_HASH:=.*/PKG_HASH:=$TOR_HASH/" \
+            feed/net/tor/Makefile
+
+          mkdir -p artifacts
+
+          grep -E '^PKG_(VERSION|HASH):=' \
+            feed/net/tor/Makefile
+
+      - name: Build Tor
+        uses: ownik/gh-action-entware-sdk@v1
+        env:
+          ARCH: ${{ matrix.arch }}
+          PACKAGES: tor
+          FEED_DIR: ${{ github.workspace }}/feed
+          ARTIFACTS_DIR: ${{ github.workspace }}/artifacts
+          BUILD_LOG: 1
+          V: s
+
+      - name: Upload IPK packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: tor-${{ needs.prepare.outputs.version }}-${{ matrix.arch }}
+          path: artifacts/bin/**/tor*.ipk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: logs-${{ matrix.arch }}
+          path: artifacts/logs/
+          if-no-files-found: ignore
+
+
+  publish-latest-release:
+    name: Publish Tor to latest release
+    runs-on: ubuntu-24.04
+    needs: [build]
+
+    permissions:
+      contents: write
+
+    env:
+      GH_REPO: ${{ github.repository }}
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: tor-*
+          path: out
+          merge-multiple: true
+
+      - name: Resolve latest target release
+        id: target-release
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const releases = await github.paginate(
+              github.rest.repos.listReleases,
+              { owner, repo, per_page: 100 }
+            );
+
+            const picked = releases.find(
+              (rel) => !rel.draft && !rel.prerelease
+            );
+
+            if (!picked) {
+              core.setFailed('No release found to update');
+              return;
+            }
+
+            core.setOutput('id', String(picked.id));
+            core.setOutput('tag', picked.tag_name);
+
+      - name: Verify Tor IPK files
+        shell: bash
+        run: |
+          find out -type f \( \
+            -name 'tor_*.ipk' -o \
+            -name 'tor-basic_*.ipk' -o \
+            -name 'tor-gencert_*.ipk' -o \
+            -name 'tor-resolve_*.ipk' -o \
+            -name 'tor-geoip_*.ipk' \
+          \) | sort > tor-files.txt
+
+          if [ ! -s tor-files.txt ]; then
+            echo "No Tor IPK files found"
+            exit 1
+          fi
+
+          cat tor-files.txt
+
+      - name: Remove previous Tor IPK assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ steps.target-release.outputs.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh api \
+            "repos/${GH_REPO}/releases/${RELEASE_ID}/assets" \
+            --paginate \
+            --jq '.[] | select(.name | test("^(tor|tor-basic|tor-gencert|tor-resolve|tor-geoip)_.*\\.ipk$")) | .id' \
+          | while read -r asset_id; do
+              [ -n "$asset_id" ] || continue
+              echo "Deleting asset: $asset_id"
+              gh api -X DELETE \
+                "repos/${GH_REPO}/releases/assets/${asset_id}"
+            done
+
+      - name: Upload new Tor IPK assets to latest release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.target-release.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -t files < tor-files.txt
+
+          printf '%s\n' "${files[@]}"
+
+          gh release upload "$TAG" "${files[@]}" --clobber
+
+      - name: Dispatch to feedly
+        if: success()
+        env:
+          AGGREGATOR_PAT: ${{ secrets.AGGREGATOR_PAT }}
+          TAG: ${{ steps.target-release.outputs.tag }}
+        shell: bash
+        run: |
+          curl -fsS -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: token ${AGGREGATOR_PAT}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/spatiumstas/feedly/dispatches \
+            -d '{"event_type":"package-built","client_payload":{"package":"'"${{ github.repository }}"'","channel":"release","tag":"'"${TAG}"'"}}'
