@@ -86,5 +86,14 @@ endef
 
 Package/mihomo_nohf/install=$(Package/mihomo/install)
 
+define Package/mihomo/postinst
+#!/bin/sh
+[ -n "$$IPKG_INSTROOT" ] && exit 0
+/opt/etc/init.d/S99mihomo check >/dev/null 2>&1 && /opt/etc/init.d/S99mihomo restart
+exit 0
+endef
+
+Package/mihomo_nohf/postinst=$(Package/mihomo/postinst)
+
 $(eval $(call BuildPackage,mihomo))
 $(eval $(call BuildPackage,mihomo_nohf))
